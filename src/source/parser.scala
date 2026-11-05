@@ -46,9 +46,13 @@ private object IdlParser extends RegexParsers {
 
   def importFileRef(): Parser[FileRef] = doc ~> (
     ("@import" ~> ("\"" ~> filePath <~ "\"")) ^^ { x => new IdlFileRef(importFile(x)) } |
-    ("@extern" ~> ("\"" ~> filePath <~ "\"")) >> {
-      case x if x.endsWith(".djinni") => success(new ExternDjinniFileRef(importFile(x)))
-      case x => success(new ExternFileRef(importFile(x)))
+    ("@extern" ~> ("\"" ~> filePath <~ "\"") ~ opt("config" ~> ("\"" ~> filePath <~ "\""))) >> {
+      case x ~ config if x.endsWith(".djinni") => config match {
+        case Some(configPath) => success(new ExternDjinniFileRef(importFile(x), importFile(configPath)))
+        case None => failure("@extern for a .djinni file requires config \"<file.yaml>\"")
+      }
+      case x ~ Some(_) => failure("@extern config is only valid for a .djinni file")
+      case x ~ None => success(new ExternFileRef(importFile(x)))
     } |
     ("@protobuf" ~> ("\"" ~> filePath <~ "\"")) ^^ { x => new ProtobufFileRef(importFile(x)) }
   )
@@ -461,9 +465,9 @@ def parseFile(idlFile: File, inFileListWriter: Option[Writer]): (Seq[TypeDecl], 
               }
               case ExternFileRef(file) =>
                 types = parseExternFile(normalized, inFileListWriter) ++ types
-              case ExternDjinniFileRef(file) =>
+              case ExternDjinniFileRef(file, configFile) =>
                 val (externTypes, _) = parseFile(normalized, inFileListWriter)
-                val normalizedConfig = normalizePath(new File(normalized.getPath + ".yaml"))
+                val normalizedConfig = normalizePath(configFile)
                 if (inFileListWriter.isDefined) inFileListWriter.get.write(normalizedConfig + "\n")
                 val config = parseGenerationConfig(normalizedConfig)
                 val externDecls = externTypes.map {
